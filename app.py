@@ -8,6 +8,9 @@ import streamlit as st
 ENV_FILE = ".env"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = "chat-latest"
+OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
+OPENAI_SPEECH_MODEL = "gpt-4o-mini-tts"
+OPENAI_SPEECH_VOICE = "coral"
 
 SYSTEM_PROMPT = """
 You are a vegetarian recipe assistant. You only create strictly vegetarian recipes.
@@ -278,6 +281,32 @@ def call_openai(prompt: str) -> str:
     )
 
 
+def call_openai_speech(input_text: str) -> bytes:
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise ValueError("Missing OPENAI_API_KEY")
+
+    payload = {
+        "model": OPENAI_SPEECH_MODEL,
+        "voice": OPENAI_SPEECH_VOICE,
+        "input": input_text,
+        "instructions": (
+            "Speak in a warm, calm, clear female voice with a natural conversational tone. "
+            "Read recipe steps slowly and clearly for home cooking."
+        ),
+        "response_format": "mp3",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(OPENAI_SPEECH_URL, json=payload, headers=headers, timeout=90)
+    response.raise_for_status()
+    return response.content
+
+
 def split_recipe_options(response_text: str) -> list[str]:
     parts = re.split(r"===\s*RECIPE\s+\d+\s*===", response_text, flags=re.IGNORECASE)
     recipes = [part.strip() for part in parts if part.strip()]
@@ -354,6 +383,81 @@ def render_ingredient_lines(lines: list[str]) -> None:
         render_section_lines(right_lines)
 
 
+def spoken_line_text(line: str) -> str:
+    cleaned = re.sub(r"^\d+\.\s*", "", line)
+    cleaned = re.sub(r"^[-*]\s*", "", cleaned)
+    cleaned = cleaned.replace("|", ", ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = cleaned.rstrip(":.")
+    return cleaned
+
+
+def build_audio_sections(recipe_text: str) -> list[tuple[str, str]]:
+    sections, _ = parse_recipe_sections(recipe_text)
+    recipe_name = " ".join(sections.get("Recipe Name", [])).strip() or "this recipe"
+    short_description = " ".join(sections.get("Short Description", [])).strip()
+
+    audio_sections: list[tuple[str, str]] = []
+
+    intro_parts = [f"Here is {recipe_name}."]
+    if short_description:
+        intro_parts.append(short_description)
+    meta_bits = []
+    for label in ["Servings", "Prep Time", "Cook Time"]:
+        value = " ".join(sections.get(label, [])).strip()
+        if value:
+            meta_bits.append(f"{label} {value}")
+    if meta_bits:
+        intro_parts.append(". ".join(meta_bits) + ".")
+    audio_sections.append(("Overview", " ".join(intro_parts)))
+
+    ingredients = sections.get("Ingredients", [])
+    if ingredients:
+        ingredients_text = "Ingredients. " + " ".join(
+            spoken_line_text(line) + "." for line in ingredients if spoken_line_text(line)
+        )
+        audio_sections.append(("Ingredients", ingredients_text))
+
+    optional_ingredients = sections.get("Optional Ingredients", [])
+    if optional_ingredients:
+        optional_text = "Optional ingredients. " + " ".join(
+            spoken_line_text(line) + "." for line in optional_ingredients if spoken_line_text(line)
+        )
+        audio_sections.append(("Optional Ingredients", optional_text))
+
+    instructions = sections.get("Instructions", [])
+    if instructions:
+        instruction_text = "Instructions. " + " ".join(
+            spoken_line_text(line) + "." for line in instructions if spoken_line_text(line)
+        )
+        audio_sections.append(("Instructions", instruction_text))
+
+    tips = sections.get("Tips", [])
+    if tips:
+        tips_text = "Tips. " + " ".join(
+            spoken_line_text(line) + "." for line in tips if spoken_line_text(line)
+        )
+        audio_sections.append(("Tips", tips_text))
+
+    substitutions = sections.get("Substitutions", [])
+    if substitutions:
+        substitutions_text = "Substitutions. " + " ".join(
+            spoken_line_text(line) + "." for line in substitutions if spoken_line_text(line)
+        )
+        audio_sections.append(("Substitutions", substitutions_text))
+
+    safety_check = sections.get("Vegetarian Safety Check", [])
+    if safety_check:
+        safety_text = "Vegetarian safety check. " + " ".join(
+            spoken_line_text(line) + "." for line in safety_check if spoken_line_text(line)
+        )
+        audio_sections.append(("Vegetarian Safety Check", safety_text))
+
+    full_recipe_text = " ".join(section_text for _, section_text in audio_sections)
+    audio_sections.insert(0, ("Full Recipe", full_recipe_text))
+    return audio_sections
+
+
 def render_recipe(recipe_text: str) -> None:
     sections, ordered_sections = parse_recipe_sections(recipe_text)
 
@@ -402,6 +506,64 @@ def render_recipe(recipe_text: str) -> None:
             render_section_lines(sections[section])
 
 
+def render_audio_controls(recipe_text: str, recipe_label: str) -> None:
+    st.markdown("### Read-Aloud Mode")
+    st.caption("AI-generated voice audio")
+
+    audio_sections = build_audio_sections(recipe_text)
+    audio_labels = [label for label, _ in audio_sections]
+    selected_audio_label = st.selectbox(
+        "Choose what to listen to",
+        audio_labels,
+        key=f"audio_section_{recipe_label}",
+    )
+
+    selected_audio_text = next(
+        text for label, text in audio_sections if label == selected_audio_label
+    )
+
+    audio_cache = st.session_state.setdefault("audio_cache", {})
+    audio_cache_key = f"{recipe_label}::{selected_audio_label}::{hash(selected_audio_text)}"
+
+    if st.button("Create audio", key=f"create_audio_{recipe_label}", use_container_width=True):
+        with st.spinner("Creating audio..."):
+            try:
+                audio_cache[audio_cache_key] = call_openai_speech(selected_audio_text)
+            except ValueError:
+                st.error(
+                    "Missing OpenAI API key. Set OPENAI_API_KEY in your local .env file or Streamlit secrets and try again."
+                )
+                return
+            except requests.exceptions.ConnectionError:
+                st.error("Could not connect to OpenAI. Please check your internet connection and try again.")
+                return
+            except requests.exceptions.Timeout:
+                st.error("The audio request timed out. Please try again.")
+                return
+            except requests.exceptions.HTTPError as exc:
+                error_text = ""
+                response = getattr(exc, "response", None)
+                if response is not None:
+                    try:
+                        error_payload = response.json().get("error", {})
+                        if isinstance(error_payload, dict):
+                            error_text = error_payload.get("message", "")
+                        else:
+                            error_text = str(error_payload)
+                    except ValueError:
+                        error_text = response.text
+                st.error(
+                    f"OpenAI returned an audio error. {error_text or 'Please verify your API key, billing, and audio model access.'}"
+                )
+                return
+            except requests.exceptions.RequestException as exc:
+                st.error(f"An unexpected audio network error occurred: {exc}")
+                return
+
+    if audio_cache_key in audio_cache:
+        st.audio(audio_cache[audio_cache_key], format="audio/mp3")
+
+
 def extract_recipe_name(recipe_text: str, fallback_label: str) -> str:
     sections, _ = parse_recipe_sections(recipe_text)
     recipe_name = " ".join(sections.get("Recipe Name", [])).strip()
@@ -435,6 +597,7 @@ def main() -> None:
     state.setdefault("recipe_options", [])
     state.setdefault("selected_recipe_label", "Recipe 1")
     state.setdefault("last_request_signature", "")
+    state.setdefault("audio_cache", {})
 
     st.set_page_config(
         page_title="Simple Vegetarian Recipe Generator",
@@ -582,6 +745,7 @@ def main() -> None:
             option["content"] for option in state["recipe_options"] if option["label"] == selected_label
         )
         render_recipe(selected_recipe)
+        render_audio_controls(selected_recipe, selected_label)
 
 if __name__ == "__main__":
     main()
