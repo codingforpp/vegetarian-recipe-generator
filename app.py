@@ -291,8 +291,9 @@ def call_openai_speech(input_text: str) -> bytes:
         "voice": OPENAI_SPEECH_VOICE,
         "input": input_text,
         "instructions": (
-            "Speak in a warm, calm, clear female voice with a natural conversational tone. "
-            "Read recipe steps slowly and clearly for home cooking."
+            "Speak in a warm, calm, clear female voice with a natural Indian-English accent "
+            "and a conversational tone. Read recipe steps slowly and clearly for home cooking. "
+            "Do not read punctuation marks, bullets, or numbering symbols out loud."
         ),
         "response_format": "mp3",
     }
@@ -468,8 +469,12 @@ def build_audio_sections(recipe_text: str) -> list[tuple[str, str]]:
 
 def render_recipe(recipe_text: str) -> None:
     sections, ordered_sections = parse_recipe_sections(recipe_text)
-
-    st.markdown("### Generated Recipe")
+    title_col, audio_col = st.columns([3, 2])
+    with title_col:
+        st.markdown("### Generated Recipe")
+    with audio_col:
+        st.markdown("### Read-Aloud Mode")
+        st.caption("AI-generated voice audio")
 
     recipe_name = " ".join(sections.get("Recipe Name", [])).strip()
     short_description = " ".join(sections.get("Short Description", [])).strip()
@@ -515,16 +520,16 @@ def render_recipe(recipe_text: str) -> None:
 
 
 def render_audio_controls(recipe_text: str, recipe_label: str) -> None:
-    st.markdown("### Read-Aloud Mode")
-    st.caption("AI-generated voice audio")
-
     audio_sections = build_audio_sections(recipe_text)
     audio_labels = [label for label, _ in audio_sections]
-    selected_audio_label = st.selectbox(
-        "Choose what to listen to",
-        audio_labels,
-        key=f"audio_section_{recipe_label}",
-    )
+    selector_col, player_col = st.columns([1, 1])
+    with selector_col:
+        selected_audio_label = st.selectbox(
+            "Choose what to listen to",
+            audio_labels,
+            key=f"audio_section_{recipe_label}",
+            label_visibility="collapsed",
+        )
 
     selected_audio_text = next(
         text for label, text in audio_sections if label == selected_audio_label
@@ -532,9 +537,8 @@ def render_audio_controls(recipe_text: str, recipe_label: str) -> None:
 
     audio_cache = st.session_state.setdefault("audio_cache", {})
     audio_cache_key = f"{recipe_label}::{selected_audio_label}::{hash(selected_audio_text)}"
-
-    if st.button("Create audio", key=f"create_audio_{recipe_label}", use_container_width=True):
-        with st.spinner("Creating audio..."):
+    if audio_cache_key not in audio_cache:
+        with st.spinner("Preparing audio..."):
             try:
                 audio_cache[audio_cache_key] = call_openai_speech(selected_audio_text)
             except ValueError:
@@ -568,7 +572,7 @@ def render_audio_controls(recipe_text: str, recipe_label: str) -> None:
                 st.error(f"An unexpected audio network error occurred: {exc}")
                 return
 
-    if audio_cache_key in audio_cache:
+    with player_col:
         st.audio(audio_cache[audio_cache_key], format="audio/mp3")
 
 
