@@ -255,6 +255,23 @@ def render_section_lines(lines: list[str]) -> None:
             st.markdown(line)
 
 
+def render_ingredient_lines(lines: list[str]) -> None:
+    ingredient_lines = [line for line in lines if line.strip()]
+    if len(ingredient_lines) < 8:
+        render_section_lines(ingredient_lines)
+        return
+
+    midpoint = (len(ingredient_lines) + 1) // 2
+    left_lines = ingredient_lines[:midpoint]
+    right_lines = ingredient_lines[midpoint:]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        render_section_lines(left_lines)
+    with col2:
+        render_section_lines(right_lines)
+
+
 def render_recipe(recipe_text: str) -> None:
     sections, ordered_sections = parse_recipe_sections(recipe_text)
 
@@ -286,7 +303,10 @@ def render_recipe(recipe_text: str) -> None:
         tabs = st.tabs(primary_sections)
         for tab, section in zip(tabs, primary_sections):
             with tab:
-                render_section_lines(sections[section])
+                if section in {"Ingredients", "Optional Ingredients"}:
+                    render_ingredient_lines(sections[section])
+                else:
+                    render_section_lines(sections[section])
 
     for section in ordered_sections:
         if section in {"Recipe Name", "Short Description", "Servings", "Prep Time", "Cook Time"}:
