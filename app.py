@@ -202,9 +202,102 @@ def call_openai(prompt: str) -> str:
     )
 
 
+def parse_recipe_sections(recipe_text: str) -> tuple[dict[str, list[str]], list[str]]:
+    section_names = {
+        "Recipe Name",
+        "Short Description",
+        "Servings",
+        "Prep Time",
+        "Cook Time",
+        "Ingredients",
+        "Optional Ingredients",
+        "Instructions",
+        "Tips",
+        "Substitutions",
+        "Vegetarian Safety Check",
+    }
+
+    sections: dict[str, list[str]] = {}
+    ordered_sections: list[str] = []
+    current_section = "Recipe Name"
+    sections[current_section] = []
+    ordered_sections.append(current_section)
+
+    for raw_line in recipe_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if ":" in line:
+            label, remainder = line.split(":", 1)
+            label = label.strip()
+            remainder = remainder.strip()
+
+            if label in section_names:
+                current_section = label
+                if current_section not in sections:
+                    sections[current_section] = []
+                    ordered_sections.append(current_section)
+                if remainder:
+                    sections[current_section].append(remainder)
+                continue
+
+        sections.setdefault(current_section, []).append(line)
+
+    return sections, ordered_sections
+
+
+def render_section_lines(lines: list[str]) -> None:
+    for line in lines:
+        if re.match(r"^\d+\.", line):
+            st.markdown(line)
+        else:
+            st.markdown(line)
+
+
 def render_recipe(recipe_text: str) -> None:
+    sections, ordered_sections = parse_recipe_sections(recipe_text)
+
     st.markdown("### Generated Recipe")
-    st.markdown(recipe_text.replace("\n", "  \n"))
+
+    recipe_name = " ".join(sections.get("Recipe Name", [])).strip()
+    short_description = " ".join(sections.get("Short Description", [])).strip()
+
+    if recipe_name:
+        st.subheader(recipe_name)
+    if short_description:
+        st.caption(short_description)
+
+    meta_parts = []
+    for label in ["Servings", "Prep Time", "Cook Time"]:
+        value = " ".join(sections.get(label, [])).strip()
+        if value:
+            meta_parts.append(f"**{label}:** {value}")
+    if meta_parts:
+        st.markdown(" | ".join(meta_parts))
+
+    primary_sections = [
+        section
+        for section in ["Ingredients", "Optional Ingredients", "Instructions"]
+        if section in sections and sections[section]
+    ]
+
+    if primary_sections:
+        tabs = st.tabs(primary_sections)
+        for tab, section in zip(tabs, primary_sections):
+            with tab:
+                render_section_lines(sections[section])
+
+    for section in ordered_sections:
+        if section in {"Recipe Name", "Short Description", "Servings", "Prep Time", "Cook Time"}:
+            continue
+        if section in primary_sections:
+            continue
+        if not sections.get(section):
+            continue
+
+        with st.expander(section, expanded=(section == "Vegetarian Safety Check")):
+            render_section_lines(sections[section])
 
 
 def main() -> None:
@@ -275,7 +368,7 @@ def main() -> None:
             servings=servings,
         )
 
-        with st.spinner("Generating a vegetarian recipe with ChatGPT..."):
+        with st.spinner("Generating your vegetarian recipe..."):
             try:
                 recipe_text = call_openai(user_prompt)
             except ValueError:
@@ -320,16 +413,6 @@ def main() -> None:
             return
 
         render_recipe(recipe_text)
-
-    with st.expander("Model configuration"):
-        st.code(
-            "Set the OpenAI API key in your environment or in .env before running:\n"
-            "OPENAI_API_KEY=your_api_key_here\n\n"
-            f"OPENAI_API_URL = {OPENAI_API_URL!r}\n"
-            f"OPENAI_MODEL = {OPENAI_MODEL!r}",
-            language="python",
-        )
-
 
 if __name__ == "__main__":
     main()
