@@ -149,7 +149,7 @@ def build_user_prompt(
     time_text = cooking_time if cooking_time != "Any" else "Any reasonable cooking time"
 
     return f"""
-Create one simple strictly vegetarian recipe based on the user's input.
+Create up to three simple, clearly different, strictly vegetarian recipe options based on the user's input.
 
 User input:
 - Ingredients or key ingredient: {ingredients}
@@ -162,52 +162,16 @@ Rules:
 - Strictly vegetarian only
 - No eggs, fish, meat, chicken, seafood, gelatin, lard, or animal stock
 - Dairy is allowed unless the user explicitly asks for vegan food
-- Use practical ingredients and realistic measurements
-- Keep the recipe concise but complete
-- Make sure the measurements scale to the requested servings
-- Prefer Indian flavor profiles when they fit the request
-- If the user input is not enough for a full recipe, fill in common pantry ingredients sensibly
-
-Return only the recipe in the required format.
-""".strip()
-
-
-def build_alternative_prompt(
-    ingredients: str,
-    cuisine: str,
-    cooking_time: str,
-    skill_level: str,
-    servings: int,
-    original_recipe: str,
-) -> str:
-    cuisine_text = cuisine if cuisine != "Any" else "No specific cuisine preference"
-    time_text = cooking_time if cooking_time != "Any" else "Any reasonable cooking time"
-
-    return f"""
-Create two additional, clearly different, strictly vegetarian recipe options based on the same user input.
-
-User input:
-- Ingredients or key ingredient: {ingredients}
-- Cuisine preference: {cuisine_text}
-- Cooking time: {time_text}
-- Skill level: {skill_level}
-- Servings: {servings}
-
-Current recipe to avoid repeating too closely:
-{original_recipe}
-
-Rules:
-- Strictly vegetarian only
-- No eggs, fish, meat, chicken, seafood, gelatin, lard, or animal stock
-- Dairy is allowed unless the user explicitly asks for vegan food
-- Make the two alternatives meaningfully different from the current recipe and from each other
 - Use practical ingredients and realistic measurements
 - Keep each recipe concise but complete
 - Make sure the measurements scale to the requested servings
+- Prefer Indian flavor profiles when they fit the request
+- If the user input is not enough for a full recipe, fill in common pantry ingredients sensibly
+- Make the recipe options meaningfully different from each other when possible
 
 Return exactly in this format:
 
-=== ALTERNATIVE 1 ===
+=== RECIPE 1 ===
 Recipe Name:
 Short Description:
 Servings:
@@ -232,7 +196,32 @@ Substitutions:
 Vegetarian Safety Check:
 - Confirm that the recipe contains no meat, fish, eggs, or seafood
 
-=== ALTERNATIVE 2 ===
+=== RECIPE 2 ===
+Recipe Name:
+Short Description:
+Servings:
+Prep Time:
+Cook Time:
+
+Ingredients:
+- Ingredient with exact measurement
+
+Optional Ingredients:
+- Optional item with quantity
+
+Instructions:
+1. Step-by-step instruction
+
+Tips:
+- Practical cooking tip
+
+Substitutions:
+- Ingredient alternative
+
+Vegetarian Safety Check:
+- Confirm that the recipe contains no meat, fish, eggs, or seafood
+
+=== RECIPE 3 ===
 Recipe Name:
 Short Description:
 Servings:
@@ -289,10 +278,10 @@ def call_openai(prompt: str) -> str:
     )
 
 
-def split_alternative_recipes(response_text: str) -> list[str]:
-    parts = re.split(r"===\s*ALTERNATIVE\s+\d+\s*===", response_text, flags=re.IGNORECASE)
+def split_recipe_options(response_text: str) -> list[str]:
+    parts = re.split(r"===\s*RECIPE\s+\d+\s*===", response_text, flags=re.IGNORECASE)
     recipes = [part.strip() for part in parts if part.strip()]
-    return recipes[:2]
+    return recipes[:3]
 
 
 def parse_recipe_sections(recipe_text: str) -> tuple[dict[str, list[str]], list[str]]:
@@ -413,13 +402,31 @@ def render_recipe(recipe_text: str) -> None:
             render_section_lines(sections[section])
 
 
-def generate_recipe_from_prompt(prompt: str) -> str:
-    recipe_text = call_openai(prompt)
-    if not recipe_text:
+def extract_recipe_name(recipe_text: str, fallback_label: str) -> str:
+    sections, _ = parse_recipe_sections(recipe_text)
+    recipe_name = " ".join(sections.get("Recipe Name", [])).strip()
+    return recipe_name or fallback_label
+
+
+def generate_recipe_options_from_prompt(prompt: str) -> list[dict[str, str]]:
+    response_text = call_openai(prompt)
+    if not response_text:
         raise ValueError("No recipe returned")
-    if not recipe_output_passes_safety_check(recipe_text):
+
+    safe_recipes = []
+    for index, recipe_text in enumerate(split_recipe_options(response_text), start=1):
+        if recipe_output_passes_safety_check(recipe_text):
+            safe_recipes.append(
+                {
+                    "label": extract_recipe_name(recipe_text, f"Recipe {index}"),
+                    "content": recipe_text,
+                }
+            )
+
+    if not safe_recipes:
         raise ValueError("Recipe failed vegetarian safety check")
-    return recipe_text
+
+    return safe_recipes
 
 
 def main() -> None:
@@ -504,16 +511,16 @@ def main() -> None:
             servings=servings,
         )
 
-        with st.spinner("Generating your vegetarian recipe..."):
+        with st.spinner("Generating your vegetarian recipe options..."):
             try:
-                recipe_text = generate_recipe_from_prompt(user_prompt)
+                recipe_options = generate_recipe_options_from_prompt(user_prompt)
             except ValueError as exc:
                 error_message = str(exc)
                 if error_message == "No recipe returned":
-                    st.error("No recipe was returned by OpenAI. Please try again.")
+                    st.error("No recipes were returned by OpenAI. Please try again.")
                 elif error_message == "Recipe failed vegetarian safety check":
                     st.error(
-                        "The generated recipe did not pass the vegetarian safety check. Please try again."
+                        "The generated recipes did not pass the vegetarian safety check. Please try again."
                     )
                 else:
                     st.error(
@@ -546,14 +553,21 @@ def main() -> None:
                 st.error(f"An unexpected network error occurred: {exc}")
                 return
 
-        state["recipe_options"] = [{"label": "Recipe 1", "content": recipe_text}]
-        state["selected_recipe_label"] = "Recipe 1"
+        state["recipe_options"] = recipe_options
+        state["selected_recipe_label"] = recipe_options[0]["label"]
         state["last_request_signature"] = request_signature
 
     if state["recipe_options"] and state["last_request_signature"] != request_signature:
         st.info("The form inputs changed. Generate again to refresh recipe options.")
 
     if state["recipe_options"]:
+        if len(state["recipe_options"]) >= 3:
+            st.caption("I can give you 3 recipes.")
+        elif len(state["recipe_options"]) == 2:
+            st.caption("I can give you 2 recipes.")
+        else:
+            st.caption("I can give you 1 recipe.")
+
         recipe_labels = [option["label"] for option in state["recipe_options"]]
         selected_label = st.selectbox(
             "Choose a recipe",
@@ -568,68 +582,6 @@ def main() -> None:
             option["content"] for option in state["recipe_options"] if option["label"] == selected_label
         )
         render_recipe(selected_recipe)
-
-        if len(state["recipe_options"]) == 1:
-            if st.button("Show 2 more recipe options", use_container_width=True):
-                cleaned_ingredients = ingredients.strip()
-                alternative_prompt = build_alternative_prompt(
-                    ingredients=cleaned_ingredients,
-                    cuisine=cuisine,
-                    cooking_time=cooking_time,
-                    skill_level=skill_level,
-                    servings=servings,
-                    original_recipe=state["recipe_options"][0]["content"],
-                )
-
-                with st.spinner("Finding two more vegetarian recipe options..."):
-                    try:
-                        alternatives_text = call_openai(alternative_prompt)
-                    except ValueError:
-                        st.error(
-                            "Missing OpenAI API key. Set OPENAI_API_KEY in your local .env file or Streamlit secrets and try again."
-                        )
-                        return
-                    except requests.exceptions.ConnectionError:
-                        st.error("Could not connect to OpenAI. Please check your internet connection and try again.")
-                        return
-                    except requests.exceptions.Timeout:
-                        st.error("The OpenAI request timed out. Please try again.")
-                        return
-                    except requests.exceptions.HTTPError as exc:
-                        error_text = ""
-                        response = getattr(exc, "response", None)
-                        if response is not None:
-                            try:
-                                error_payload = response.json().get("error", {})
-                                if isinstance(error_payload, dict):
-                                    error_text = error_payload.get("message", "")
-                                else:
-                                    error_text = str(error_payload)
-                            except ValueError:
-                                error_text = response.text
-                        st.error(
-                            f"OpenAI returned an error. {error_text or 'Please verify your API key, billing, and configured model.'}"
-                        )
-                        return
-                    except requests.exceptions.RequestException as exc:
-                        st.error(f"An unexpected network error occurred: {exc}")
-                        return
-
-                alternative_recipes = []
-                for recipe_text in split_alternative_recipes(alternatives_text):
-                    if recipe_output_passes_safety_check(recipe_text):
-                        alternative_recipes.append(recipe_text)
-
-                if not alternative_recipes:
-                    st.error("No safe alternative recipes were returned. Please try again.")
-                    return
-
-                for idx, recipe_text in enumerate(alternative_recipes, start=2):
-                    state["recipe_options"].append(
-                        {"label": f"Recipe {idx}", "content": recipe_text}
-                    )
-                state["selected_recipe_label"] = "Recipe 2"
-                st.rerun()
 
 if __name__ == "__main__":
     main()
