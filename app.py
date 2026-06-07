@@ -262,7 +262,7 @@ def call_openai(prompt: str) -> str:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        "max_completion_tokens": 900,
+        "max_completion_tokens": 1800,
     }
 
     headers = {
@@ -310,6 +310,14 @@ def call_openai_speech(input_text: str) -> bytes:
 def split_recipe_options(response_text: str) -> list[str]:
     parts = re.split(r"===\s*RECIPE\s+\d+\s*===", response_text, flags=re.IGNORECASE)
     recipes = [part.strip() for part in parts if part.strip()]
+    if recipes:
+        return recipes[:3]
+
+    # Fallback: if the model returns one complete recipe without markers,
+    # still treat it as a valid single option.
+    if "Recipe Name:" in response_text and "Ingredients:" in response_text and "Instructions:" in response_text:
+        return [response_text.strip()]
+
     return recipes[:3]
 
 
