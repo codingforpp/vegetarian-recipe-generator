@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dark body {
+    @apply bg-forest-950 text-canvas;
+  }
+
+  /* Hide scrollbars but keep scroll */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+
+  ::selection {
+    @apply bg-clay-200 text-clay-900;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-canvas/75 backdrop-blur-xl backdrop-saturate-150;
+  }
+  .dark .glass {
+    @apply bg-forest-950/75;
+  }
+
+  .card {
+    @apply bg-canvas-raised rounded-3xl shadow-soft border border-black/[0.04];
+  }
+  .dark .card {
+    @apply bg-forest-900/70 border-white/[0.06];
+  }
+
+  .field {
+    @apply w-full rounded-2xl bg-canvas-subtle border border-black/[0.06] px-4 py-3.5 text-ink
+      placeholder:text-ink-faint outline-none transition
+      focus:border-forest-400 focus:bg-canvas-raised focus:ring-4 focus:ring-forest-500/10;
+  }
+  .dark .field {
+    @apply bg-forest-950/60 border-white/10 text-canvas placeholder:text-canvas/30
+      focus:border-forest-400 focus:bg-forest-900;
+  }
+
+  .label {
+    @apply text-[13px] font-semibold text-ink-soft mb-2 block tracking-wide;
+  }
+  .dark .label {
+    @apply text-canvas/55;
+  }
+
+  .pressable {
+    @apply transition-transform duration-150 ease-spring active:scale-[0.97];
+  }
+}
+
+/* Smooth momentum scroll on iOS */
+.scroll-area {
+  -webkit-overflow-scrolling: touch;
+}
