@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Pencil, Wrench, Clock, CheckCircle2, Plus } from 'lucide-react'
 import { Sheet, SheetHeader } from '../ui/Sheet'
 import { GhostButton, PrimaryButton } from '../ui/controls'
@@ -15,10 +16,17 @@ export function EquipmentDetail({ equipmentId, onClose }: { equipmentId: string;
   const openSheet = useUI((s) => s.openSheet)
   const showToast = useUI((s) => s.showToast)
 
-  if (!item) {
-    onClose()
-    return null
-  }
+  // If the equipment is removed, dismiss after render rather than calling
+  // history.back() mid-render. Fire once.
+  const closedRef = useRef(false)
+  useEffect(() => {
+    if (!item && !closedRef.current) {
+      closedRef.current = true
+      onClose()
+    }
+  }, [item, onClose])
+
+  if (!item) return null
 
   const svc = serviceStatus(item.lastServiced, item.serviceIntervalDays)
   const openJobs = jobs.filter((j) => j.status !== 'done')

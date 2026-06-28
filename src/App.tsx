@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useUI } from './lib/ui'
 import { useTheme } from './lib/useTheme'
@@ -20,6 +21,19 @@ export default function App() {
   useTheme()
   const tab = useUI((s) => s.tab)
   const Screen = screens[tab]
+
+  // Keep the open-sheet stack in sync with browser history so the hardware
+  // / edge-swipe Back button closes one sheet at a time instead of leaving
+  // the app. A sheet open across a reload is dismissed on load.
+  useEffect(() => {
+    useUI.getState().syncSheets(0)
+    const onPop = () => {
+      const depth = (window.history.state && window.history.state.acreDepth) || 0
+      useUI.getState().syncSheets(depth)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   return (
     <div className="min-h-full">

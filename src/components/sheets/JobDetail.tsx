@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Check, Pencil, Repeat, Clock, DollarSign, CalendarDays } from 'lucide-react'
 import { Sheet, SheetHeader } from '../ui/Sheet'
 import { GhostButton, PrimaryButton } from '../ui/controls'
@@ -15,10 +16,17 @@ export function JobDetail({ jobId, onClose }: { jobId: string; onClose: () => vo
   const toggleChecklistItem = useStore((s) => s.toggleChecklistItem)
   const openSheet = useUI((s) => s.openSheet)
 
-  if (!job) {
-    onClose()
-    return null
-  }
+  // If the job is removed (e.g. deleted from the edit sheet), dismiss after
+  // render rather than calling history.back() mid-render. Fire once.
+  const closedRef = useRef(false)
+  useEffect(() => {
+    if (!job && !closedRef.current) {
+      closedRef.current = true
+      onClose()
+    }
+  }, [job, onClose])
+
+  if (!job) return null
 
   const cat = CATEGORIES[job.category]
   const Icon = cat.icon
